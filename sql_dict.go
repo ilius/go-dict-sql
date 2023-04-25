@@ -2,18 +2,15 @@ package sqldict
 
 import (
 	"database/sql"
-	"database/sql/driver"
 	"encoding/hex"
 	"fmt"
 	"log"
-	"regexp"
 	"strings"
 	"time"
 
 	// _ "github.com/glebarez/go-sqlite"
 	common "github.com/ilius/go-dict-commons"
 	su "github.com/ilius/go-dict-commons/search_utils"
-	"modernc.org/sqlite"
 )
 
 var ErrorHandler = func(err error) {
@@ -73,10 +70,6 @@ func (d *dictionaryImp) Loaded() bool {
 }
 
 func (d *dictionaryImp) Load() error {
-	err := d.defineRegexp()
-	if err != nil {
-		return err
-	}
 	db, err := sql.Open(d.driver, d.source)
 	if err != nil {
 		return err
@@ -222,18 +215,65 @@ func (d *dictionaryImp) newResult(terms []string, id int, score uint8) *common.S
 	}
 }
 
+func (d *dictionaryImp) getTerms(id int) ([]string, error) {
+	row := d.db.QueryRow("SELECT term FROM entry WHERE id = ?", id)
+	if row == nil {
+		return nil, fmt.Errorf("id %v was not found", id)
+	}
+	head := ""
+	err := row.Scan(&head)
+	if err != nil {
+		return nil, err
+	}
+	terms := []string{head}
+	term := ""
+	rows, err := d.db.Query("SELECT term FROM alt WHERE id = ?", id)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		err := rows.Scan(&term)
+		if err != nil {
+			return nil, err
+		}
+		terms = append(terms, term)
+	}
+	return terms, nil
+}
+
 func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*common.SearchResultLow {
-	t1 := time.Now()
+	if len(query) < 2 {
+		log.Println("SQLite fuzzy search does not support query smaller than 2 letters")
+		return nil
+	}
+
+	t0 := time.Now()
 	query = strings.ToLower(strings.TrimSpace(query))
 
-	rows, err := d.db.Query(
-		"SELECT id, term FROM entry WHERE term LIKE ?",
-		"%"+query+"%",
-	)
+	e_str := []rune("\n" + query)
+	n := len(e_str) - 2
+	sqlArgs := make([]any, 0, n)
+	subMap := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		sub := string(e_str[i : i+3])
+		if subMap[sub] {
+			continue
+		}
+		subMap[sub] = true
+		sqlArgs = append(sqlArgs, sub)
+	}
+	qMarks := strings.Repeat("?, ", len(sqlArgs)-1) + "?"
+	sqlQuery := "SELECT DISTINCT id, term FROM fuzzy3 WHERE sub IN(" + qMarks + ");"
+	log.Printf("%#v  args: %#v", sqlQuery, sqlArgs)
+	rows, err := d.db.Query(sqlQuery, sqlArgs...)
 	if err != nil {
 		ErrorHandler(err)
 		return nil
 	}
+
+	log.Printf("SearchFuzzy SQL query took %v for %#v on %s\n", time.Since(t0), query, d.DictName())
+	t1 := time.Now()
+
 	queryWords := strings.Split(query, " ")
 
 	mainWordIndex := 0
@@ -259,27 +299,36 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 		MinWordCount:   minWordCount,
 		MainWordIndex:  mainWordIndex,
 	}
-	results := []*common.SearchResultLow{}
+	id := -1
+	term := ""
+	scoreMap := map[int]uint8{}
 	for rows.Next() {
-		id := -1
-		term := ""
 		err := rows.Scan(&id, &term)
 		if err != nil {
 			ErrorHandler(err)
 			return nil
 		}
-		// TODO: alts
-		terms := []string{term}
-		score := su.ScoreFuzzy(terms, args)
+		score := su.ScoreFuzzy([]string{term}, args)
 		if score < minScore {
 			continue
 		}
+		if score > scoreMap[id] {
+			scoreMap[id] = score
+		}
+	}
+	log.Printf("SearchFuzzy query loop took %v for %#v on %s\n", time.Since(t1), query, d.DictName())
+	t2 := time.Now()
+	results := []*common.SearchResultLow{}
+	for id, score := range scoreMap {
+		terms, err := d.getTerms(id)
+		if err != nil {
+			ErrorHandler(err)
+			return nil
+		}
 		results = append(results, d.newResult(terms, id, score))
 	}
-	dt := time.Since(t1)
-	if dt > time.Millisecond {
-		log.Printf("SearchFuzzy index loop took %v for %#v on %s\n", dt, query, d.DictName())
-	}
+
+	log.Printf("SearchFuzzy score loop took %v for %#v on %s", time.Since(t2), query, d.DictName())
 	return results
 }
 
@@ -384,22 +433,4 @@ func (d *dictionaryImp) SearchGlob(query string, _ int, _ time.Duration) ([]*com
 		log.Printf("SearchGlob index loop took %v for %#v on %s\n", dt, query, d.DictName())
 	}
 	return results, nil
-}
-
-func (d *dictionaryImp) defineRegexp() error {
-	const argc = 2
-	return sqlite.RegisterDeterministicScalarFunction(
-		"regexp",
-		argc,
-		func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-			s1 := args[0].(string)
-			s2 := args[1].(string)
-			matched, err := regexp.MatchString(s1, s2)
-			if err != nil {
-				return nil, fmt.Errorf("bad regular expression: %q", err)
-			}
-			// sqlite3.Xsqlite3_result_int(tls, ctx, libc.Bool32(matched))
-			return matched, nil
-		},
-	)
 }
