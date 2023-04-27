@@ -311,7 +311,7 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 			ErrorHandler(err)
 			return nil
 		}
-		score := su.ScoreFuzzy([]string{term}, args)
+		score := su.ScoreFuzzySingle(term, args)
 		if score < minScore {
 			continue
 		}

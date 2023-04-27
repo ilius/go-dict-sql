@@ -3,7 +3,7 @@ module github.com/ilius/go-dict-sql
 go 1.20
 
 require (
-	github.com/ilius/go-dict-commons v0.2.0
+	github.com/ilius/go-dict-commons v0.2.1
 	modernc.org/sqlite v1.22.0
 )
 
@@ -27,3 +27,5 @@ require (
 	modernc.org/strutil v1.1.3 // indirect
 	modernc.org/token v1.0.1 // indirect
 )
+
+// replace github.com/ilius/go-dict-commons => ../go-dict-commons
