@@ -3,7 +3,7 @@ module github.com/ilius/go-dict-sql
 go 1.20
 
 require (
-	github.com/ilius/go-dict-commons v0.2.1
+	github.com/ilius/go-dict-commons v0.2.2
 	modernc.org/sqlite v1.22.0
 )
 

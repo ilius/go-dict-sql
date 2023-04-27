@@ -241,6 +241,15 @@ func (d *dictionaryImp) getTerms(id int) ([]string, error) {
 	return terms, nil
 }
 
+func (d *dictionaryImp) EntryByIndex(index int) *common.SearchResultLow {
+	terms, err := d.getTerms(index + 1)
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+	return d.newResult(terms, index, 0)
+}
+
 func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*common.SearchResultLow {
 	if len(query) < 2 {
 		log.Println("SQLite fuzzy search does not support query smaller than 2 letters")
