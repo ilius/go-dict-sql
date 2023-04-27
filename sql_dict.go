@@ -249,18 +249,23 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 
 	t0 := time.Now()
 	query = strings.ToLower(strings.TrimSpace(query))
+	queryWords := strings.Split(query, " ")
+	queryRunes := []rune(query)
 
-	e_str := []rune("\n" + query)
-	n := len(e_str) - 2
-	sqlArgs := make([]any, 0, n)
-	subMap := make(map[string]bool, n)
-	for i := 0; i < n; i++ {
-		sub := string(e_str[i : i+3])
-		if subMap[sub] {
-			continue
+	maxSubCount := len(queryRunes) - 2*len(queryWords)
+	sqlArgs := make([]any, 0, maxSubCount)
+	subMap := make(map[string]bool, maxSubCount)
+	for _, word := range queryWords {
+		e_runes := []rune("\n" + word)
+		n := len(e_runes) - 2
+		for i := 0; i < n; i++ {
+			sub := string(e_runes[i : i+3])
+			if subMap[sub] {
+				continue
+			}
+			subMap[sub] = true
+			sqlArgs = append(sqlArgs, sub)
 		}
-		subMap[sub] = true
-		sqlArgs = append(sqlArgs, sub)
 	}
 	qMarks := strings.Repeat("?, ", len(sqlArgs)-1) + "?"
 	sqlQuery := "SELECT DISTINCT id, term FROM fuzzy3 WHERE sub IN(" + qMarks + ");"
@@ -273,8 +278,6 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 
 	log.Printf("SearchFuzzy SQL query took %v for %#v on %s\n", time.Since(t0), query, d.DictName())
 	t1 := time.Now()
-
-	queryWords := strings.Split(query, " ")
 
 	mainWordIndex := 0
 	for mainWordIndex < len(queryWords)-1 && queryWords[mainWordIndex] == "*" {
@@ -293,7 +296,7 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 
 	args := &su.ScoreFuzzyArgs{
 		Query:          query,
-		QueryRunes:     []rune(query),
+		QueryRunes:     queryRunes,
 		QueryMainWord:  []rune(queryWords[mainWordIndex]),
 		QueryWordCount: queryWordCount,
 		MinWordCount:   minWordCount,
