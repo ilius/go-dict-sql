@@ -314,13 +314,14 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 	id := -1
 	term := ""
 	scoreMap := map[int]uint8{}
+	buff := make([]uint16, 500)
 	for rows.Next() {
 		err := rows.Scan(&id, &term)
 		if err != nil {
 			ErrorHandler(err)
 			return nil
 		}
-		score := su.ScoreFuzzySingle(term, args)
+		score := su.ScoreFuzzySingle(term, args, buff)
 		if score < minScore {
 			continue
 		}
