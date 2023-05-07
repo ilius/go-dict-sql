@@ -354,6 +354,7 @@ func (d *dictionaryImp) searchDB(termCond string, arg string) *sql.Rows {
 		"json_group_array(alt.term)" +
 		"FROM entry LEFT JOIN alt ON entry.id=alt.id " +
 		"WHERE entry.term " + termCond + " " +
+		"OR alt.term " + termCond + " " +
 		"GROUP BY entry.id;"
 	rows, err := d.db.Query(
 		sqlQ,
@@ -371,7 +372,6 @@ func (d *dictionaryImp) SearchStartWith(query string, _ int, _ time.Duration) []
 	t1 := time.Now()
 	query = strings.ToLower(strings.TrimSpace(query))
 	rows := d.searchDB("LIKE ?", query+"%")
-	// TODO: search alt.term in a new query?
 	if rows == nil {
 		return nil
 	}
