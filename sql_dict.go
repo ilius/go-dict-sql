@@ -261,8 +261,11 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 	query = strings.ToLower(strings.TrimSpace(query))
 	queryWords := strings.Split(query, " ")
 	queryRunes := []rune(query)
-
 	maxSubCount := len(queryRunes) - 2*len(queryWords)
+	if maxSubCount < 0 {
+		// for example query is: "a", "a b", "a b c"
+		return d.SearchStartWith(query, 0, 0)
+	}
 	sqlArgs := make([]any, 0, maxSubCount)
 	subMap := make(map[string]bool, maxSubCount)
 	for _, word := range queryWords {
