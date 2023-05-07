@@ -3,6 +3,7 @@ package sqldict
 import (
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -345,28 +346,48 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 	return results
 }
 
+func (d *dictionaryImp) searchDB(termCond string, arg string) *sql.Rows {
+	sqlQ := "SELECT entry.id, entry.term, " +
+		"json_group_array(alt.term)" +
+		"FROM entry LEFT JOIN alt ON entry.id=alt.id " +
+		"WHERE entry.term " + termCond + " " +
+		"GROUP BY entry.id;"
+	rows, err := d.db.Query(
+		sqlQ,
+		arg,
+		arg,
+	)
+	if err != nil {
+		ErrorHandler(fmt.Errorf("error running SQL query %#v: %v", sqlQ, err))
+		return nil
+	}
+	return rows
+}
+
 func (d *dictionaryImp) SearchStartWith(query string, _ int, _ time.Duration) []*common.SearchResultLow {
 	t1 := time.Now()
 	query = strings.ToLower(strings.TrimSpace(query))
-	rows, err := d.db.Query(
-		"SELECT id, term FROM entry WHERE term LIKE ?",
-		query+"%",
-	)
-	if err != nil {
-		ErrorHandler(err)
+	rows := d.searchDB("LIKE ?", query+"%")
+	// TODO: search alt.term in a new query?
+	if rows == nil {
 		return nil
 	}
 	results := []*common.SearchResultLow{}
 	for rows.Next() {
 		id := -1
 		term := ""
-		err := rows.Scan(&id, &term)
+		altsJson := ""
+		err := rows.Scan(&id, &term, &altsJson)
 		if err != nil {
 			ErrorHandler(err)
 			return nil
 		}
-		// TODO: alts
-		terms := []string{term}
+		var alts []string
+		err = json.Unmarshal([]byte(altsJson), &alts)
+		if err != nil {
+			ErrorHandler(err)
+		}
+		terms := append([]string{term}, alts...)
 		score := su.ScoreStartsWith(terms, query)
 		if score < minScore {
 			continue
@@ -381,27 +402,30 @@ func (d *dictionaryImp) SearchStartWith(query string, _ int, _ time.Duration) []
 }
 
 func (d *dictionaryImp) searchPattern(
-	where string,
+	termCond string,
 	arg string,
 	checkTerm func(string) uint8,
 ) []*common.SearchResultLow {
-	sqlQ := "SELECT id, term FROM entry WHERE " + where
-	rows, err := d.db.Query(sqlQ, arg)
-	if err != nil {
-		ErrorHandler(fmt.Errorf("error running SQL query %#v: %v", sqlQ, err))
+	rows := d.searchDB(termCond, arg)
+	if rows == nil {
 		return nil
 	}
 	results := []*common.SearchResultLow{}
 	for rows.Next() {
 		id := -1
 		term := ""
-		err := rows.Scan(&id, &term)
+		altsJson := ""
+		err := rows.Scan(&id, &term, &altsJson)
 		if err != nil {
 			ErrorHandler(err)
 			return nil
 		}
-		// TODO: alts
-		terms := []string{term}
+		var alts []string
+		err = json.Unmarshal([]byte(altsJson), &alts)
+		if err != nil {
+			ErrorHandler(err)
+		}
+		terms := append([]string{term}, alts...)
 		score := uint8(0)
 		for _, term := range terms {
 			termScore := checkTerm(term)
@@ -420,7 +444,7 @@ func (d *dictionaryImp) searchPattern(
 
 func (d *dictionaryImp) SearchRegex(query string, _ int, _ time.Duration) ([]*common.SearchResultLow, error) {
 	t1 := time.Now()
-	results := d.searchPattern("term REGEXP ?", "^"+query+"$", func(term string) uint8 {
+	results := d.searchPattern("REGEXP ?", "^"+query+"$", func(term string) uint8 {
 		if len(term) < 20 {
 			return 200 - uint8(len(term))
 		}
@@ -435,7 +459,7 @@ func (d *dictionaryImp) SearchRegex(query string, _ int, _ time.Duration) ([]*co
 
 func (d *dictionaryImp) SearchGlob(query string, _ int, _ time.Duration) ([]*common.SearchResultLow, error) {
 	t1 := time.Now()
-	results := d.searchPattern("term GLOB ?", query, func(term string) uint8 {
+	results := d.searchPattern("GLOB ?", query, func(term string) uint8 {
 		if len(term) < 20 {
 			return 200 - uint8(len(term))
 		}
