@@ -267,16 +267,16 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 		return d.SearchStartWith(query, 0, 0)
 	}
 	sqlArgs := make([]any, 0, maxSubCount)
-	subMap := make(map[string]bool, maxSubCount)
+	subMap := make(map[string]struct{}, maxSubCount)
 	for _, word := range queryWords {
 		e_runes := []rune("\n" + word)
 		n := len(e_runes) - 2
 		for i := 0; i < n; i++ {
 			sub := string(e_runes[i : i+3])
-			if subMap[sub] {
+			if _, ok := subMap[sub]; ok {
 				continue
 			}
-			subMap[sub] = true
+			subMap[sub] = struct{}{}
 			sqlArgs = append(sqlArgs, sub)
 		}
 	}
