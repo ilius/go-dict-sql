@@ -362,7 +362,7 @@ func (d *dictionaryImp) searchDB(termCond string, arg string) *sql.Rows {
 		arg,
 	)
 	if err != nil {
-		ErrorHandler(fmt.Errorf("error running SQL query %#v: %v", sqlQ, err))
+		ErrorHandler(fmt.Errorf("error running SQL query %#v: %w", sqlQ, err))
 		return nil
 	}
 	return rows
