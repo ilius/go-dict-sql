@@ -325,7 +325,7 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 			ErrorHandler(err)
 			return nil
 		}
-		score := su.ScoreFuzzySingle(term, args, buff)
+		score := su.ScoreFuzzy([]string{term}, args, buff)
 		if score < minScore {
 			continue
 		}
@@ -349,7 +349,7 @@ func (d *dictionaryImp) SearchFuzzy(query string, _ int, _ time.Duration) []*com
 	return results
 }
 
-func (d *dictionaryImp) searchDB(termCond string, arg string) *sql.Rows {
+func (d *dictionaryImp) searchDB(termCond string, args ...any) *sql.Rows {
 	sqlQ := "SELECT entry.id, entry.term, " +
 		"json_group_array(alt.term)" +
 		"FROM entry LEFT JOIN alt ON entry.id=alt.id " +
@@ -358,8 +358,7 @@ func (d *dictionaryImp) searchDB(termCond string, arg string) *sql.Rows {
 		"GROUP BY entry.id;"
 	rows, err := d.db.Query(
 		sqlQ,
-		arg,
-		arg,
+		append(args, args...)...,
 	)
 	if err != nil {
 		ErrorHandler(fmt.Errorf("error running SQL query %#v: %w", sqlQ, err))
@@ -473,4 +472,80 @@ func (d *dictionaryImp) SearchGlob(query string, _ int, _ time.Duration) ([]*com
 		log.Printf("SearchGlob index loop took %v for %#v on %s\n", dt, query, d.DictName())
 	}
 	return results, nil
+}
+
+func (d *dictionaryImp) searchDB2(
+	termColumn string,
+	altColumn string,
+	termCond string,
+	args []any,
+) *sql.Rows {
+	sqlQ := "SELECT entry.id, entry.term, " +
+		"json_group_array(alt.term)" +
+		"FROM entry LEFT JOIN alt ON entry.id=alt.id " +
+		"WHERE " + termColumn + " " + termCond + " " +
+		"OR " + altColumn + termCond + " " +
+		"GROUP BY entry.id;"
+	rows, err := d.db.Query(
+		sqlQ,
+		append(args, args...)...,
+	)
+	if err != nil {
+		ErrorHandler(fmt.Errorf("error running SQL query %#v: %w", sqlQ, err))
+		return nil
+	}
+	return rows
+}
+
+// TODO: -- Create optimized index for word search
+// CREATE INDEX idx_entry_word_search ON entry(term || ' ');
+// CREATE INDEX idx_alt_word_search ON alt(term || ' ');
+
+func (d *dictionaryImp) SearchWordMatch(query string, workerCount int, timeout time.Duration) []*common.SearchResultLow {
+	t1 := time.Now()
+	query = strings.ToLower(strings.TrimSpace(query))
+	queryWords := strings.Split(query, " ")
+	firstWord := queryWords[0]
+	// FIXME: one of the term words must match one of queryWords
+	rows := d.searchDB2(
+		"(' ' || entry.term || ' ')",
+		"(' ' || alt.term || ' ')",
+		"LIKE ?",
+		[]any{
+			"% " + firstWord + " %",
+		},
+	)
+	if rows == nil {
+		return nil
+	}
+	results := []*common.SearchResultLow{}
+	for rows.Next() {
+		id := -1
+		term := ""
+		altsJson := ""
+		err := rows.Scan(&id, &term, &altsJson)
+		if err != nil {
+			ErrorHandler(err)
+			return nil
+		}
+		var alts []string
+		err = json.Unmarshal([]byte(altsJson), &alts)
+		if err != nil {
+			ErrorHandler(err)
+		}
+		if len(alts) == 1 && alts[0] == "" {
+			alts = nil
+		}
+		terms := append([]string{term}, alts...)
+		score := su.ScoreWordMatch(terms, query)
+		if score < minScore {
+			continue
+		}
+		results = append(results, d.newResult(terms, id, score))
+	}
+	dt := time.Since(t1)
+	if dt > time.Millisecond {
+		log.Printf("SearchStartWith index loop took %v for %#v on %s\n", dt, query, d.DictName())
+	}
+	return results
 }
